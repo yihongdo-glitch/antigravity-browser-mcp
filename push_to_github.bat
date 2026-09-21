@@ -1,25 +1,23 @@
 @echo off
-chcp 65001 >nul
-title 正在推送 Antigravity Browser Controller 到 GitHub...
+cd /d "%~dp0"
 echo ======================================================
-echo    正在将代码推送到 GitHub:
-echo    https://github.com/yihongdo-glitch/antigravity-browser-mcp
+echo   Pushing Antigravity Browser Controller to GitHub
+echo   https://github.com/yihongdo-glitch/antigravity-browser-mcp
 echo ======================================================
 echo.
-cd /d "%~dp0"
-echo 正在执行: git push -u origin main
-echo (如果弹出 GitHub 授权窗口，请直接点击 'Sign in with your browser' 即可一键完成授权)
+echo Running: git push -u origin main
 echo.
 git push -u origin main
-if %errorlevel% equ 0 (
-    echo.
+echo.
+if %ERRORLEVEL% EQU 0 (
     echo ======================================================
-    echo [OK] 发布成功！
-    echo 仓库地址: https://github.com/yihongdo-glitch/antigravity-browser-mcp
+    echo [SUCCESS] Repository successfully pushed to GitHub!
+    echo URL: https://github.com/yihongdo-glitch/antigravity-browser-mcp
     echo ======================================================
 ) else (
-    echo.
-    echo 推送遇到问题，请检查网络或授权。
+    echo ======================================================
+    echo [NOTICE] If prompted, sign in with your browser.
+    echo ======================================================
 )
 echo.
 pause
