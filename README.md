@@ -12,8 +12,107 @@
 
 ---
 
+<a name="english"></a>
+## 🌐 English Documentation
+
+### 💡 Why Antigravity Browser Controller? (The Problem It Solves)
+
+Current AI browser automation approaches—such as Playwright, Selenium, and vision-based OS "Computer Use"—suffer from critical friction points in real-world workflows:
+
+| Challenges | Traditional Playwright / CDP | Claude Vision "Computer Use" | **Antigravity Browser Controller** |
+| :--- | :--- | :--- | :--- |
+| **Login Persistence (Cookies)** | Requires separate profile; loses sessions; triggers aggressive captchas/bot blocks | Operates in active desktop foreground; disrupted by user input | **100% inherits your existing Chrome logins (no re-auth, bypasses captchas)** |
+| **Startup & Config** | Must kill existing Chrome instances and launch with `--remote-debugging-port=9222` | Takes heavy screenshots & estimates coordinates; burns high-cost Vision tokens | **10-second drag-and-drop extension; zero command-line launch flags** |
+| **Background & Lock Screen** | Frequently creates blank `about:blank` ghost windows that hijack focus | Cannot run in the background; fails immediately when screen is locked (`Win+L`) | **Runs silently in memory & DOM; continues operating even when Windows is locked** |
+| **Modern Web Frameworks** | Form fills often fail to trigger React / Vue synthetic state changes | Coordinate clicks are prone to 5px offsets on dynamic or scrolling pages | **Overrides native setters to guarantee 100% reliable React / Vue event dispatching** |
+
+---
+
+### 🚀 10-Second Quickstart
+
+#### Step 1: Install the Chrome Extension
+```bash
+git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
+```
+1. Open Chrome and navigate to `chrome://extensions/`.
+2. Toggle **Developer mode** in the top-right corner to **ON**.
+3. Drag and drop the cloned project folder directly into the extensions page (or click **Load unpacked** and select the folder).
+4. The purple Antigravity icon will appear in your Chrome toolbar.
+
+#### Step 2: Configure Your AI Client (One-Click MCP Integration)
+
+##### 1. Claude Desktop (`claude_desktop_config.json`)
+Add the following to your `mcpServers` object:
+```json
+{
+  "mcpServers": {
+    "antigravity-browser": {
+      "command": "python",
+      "args": [
+        "path/to/antigravity-browser-mcp/bridge/mcp_server.py"
+      ]
+    }
+  }
+}
+```
+
+##### 2. Cursor / Windsurf
+In **Settings -> Features -> MCP**, add a new stdio server:
+* **Name**: `antigravity-browser`
+* **Type**: `command`
+* **Command**: `python path/to/antigravity-browser-mcp/bridge/mcp_server.py`
+
+##### 3. Antigravity IDE
+Pre-registered in `mcp_config.json`, fully plug-and-play.
+
+---
+
+### 🛠️ MCP Tools Reference (11 Atomic Capabilities)
+
+| Tool Name | Parameters | Description |
+| :--- | :--- | :--- |
+| `browser_list_tabs` | *none* | Lists all open tabs in your Chrome window (ID, title, URL, active state). |
+| `browser_get_active_tab` | *none* | Retrieves metadata of the currently focused browser tab. |
+| `browser_find_tab` | `url_keyword`, `title_keyword` | Instantly finds an open tab matching a URL or title substring (e.g., `'zhipin.com'`, `'github'`). |
+| `browser_click_element` | `tab_id`, `selector`, `text` | Clicks an element. Supports both CSS selectors and **direct visible button/link text** (e.g., `text="Submit"`). |
+| `browser_fill_input` | `tab_id`, `selector`, `value` | Injects text into inputs/textareas while bypassing React/Vue synthetic DOM barriers. |
+| `browser_query_elements` | `tab_id`, `selector` | Extracts structured data (text, tag, attributes, visibility) for matching DOM nodes. |
+| `browser_evaluate_script` | `tab_id`, `script` | Executes arbitrary JavaScript in the page context, automatically bypassing page CSP restrictions. |
+| `browser_take_screenshot` | `tab_id`, `output_path` | Captures high-fidelity page screenshots—works even when Chrome is minimized or screen is locked. |
+| `browser_navigate` | `tab_id`, `url` | Navigates the specified tab to a new URL. |
+| `browser_create_tab` | `url`, `active` | Opens a new browser tab. |
+| `browser_close_tab` | `tab_id` | Closes a specific tab by ID. |
+
+---
+
+### 🏗️ Architecture & Privacy Guarantee
+
+```text
+  [ AI Clients: Claude Desktop / Cursor / Antigravity ]
+                         ▲
+                         │ (Standard MCP stdio / JSON-RPC 2.0)
+                         ▼
+            [ Python MCP Bridge Server ]
+                         ▲
+                         │ (Local WebSocket: ws://127.0.0.1:18888)
+                         ▼
+       [ Chrome Extension (Manifest V3 Service Worker) ]
+                         │
+               ┌─────────┴─────────┐
+               ▼                   ▼
+      [ DOM Injection Engine ]   [ Chrome DevTools Protocol ]
+     (Zero latency, framework)   (CSP bypass, lock-screen snap)
+```
+
+> **🔒 Privacy Commitment**:
+> All communication happens strictly over the local loopback interface (`127.0.0.1`). **No external servers, no cloud relays, zero telemetry, zero analytics.** Your account cookies, session tokens, and browsing data never leave your local machine.
+
+---
+
 <a name="chinese"></a>
-## 💡 为什么需要它？(痛点对比)
+## 🇨🇳 中文说明文档
+
+### 💡 为什么需要它？(痛点对比)
 
 目前主流的 AI 浏览器控制方案（Playwright / Selenium / 视觉截图 OS Control）普遍存在以下痛点：
 
@@ -26,9 +125,9 @@
 
 ---
 
-## 🚀 10 秒极速上手
+### 🚀 10 秒极速上手
 
-### 1. 克隆与安装扩展
+#### 步骤 1：安装 Chrome 扩展
 ```bash
 git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
 ```
@@ -37,9 +136,9 @@ git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
 3. 将本项目文件夹直接拖入该页面（或点击左上角「加载已解压的扩展程序」选择本项目目录）。
 4. 工具栏出现紫色 Antigravity 图标即表示就绪！
 
-### 2. 配置你的 AI 客户端 (MCP 一键挂载)
+#### 步骤 2：配置你的 AI 客户端 (MCP 一键挂载)
 
-#### 在 Claude Desktop 中使用
+##### 1. 在 Claude Desktop 中使用
 在 `claude_desktop_config.json` 的 `mcpServers` 节点中添加：
 ```json
 {
@@ -54,35 +153,36 @@ git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
 }
 ```
 
-#### 在 Cursor / Windsurf 中使用
-在 MCP 设置中添加自定义 stdio 命令：
+##### 2. 在 Cursor / Windsurf 中使用
+在 **Settings -> Features -> MCP** 中添加自定义 stdio 命令：
 - **Name**: `antigravity-browser`
 - **Command**: `python`
 - **Args**: `path/to/antigravity-browser-mcp/bridge/mcp_server.py`
 
-#### 在 Antigravity 中使用
+##### 3. 在 Antigravity 中使用
 已内置挂载至全局 `mcp_config.json`，开箱即用。
 
 ---
 
-## 🛠️ MCP 核心工具能力一览 (11 项原子工具)
+### 🛠️ MCP 核心工具能力一览 (11 项原子工具)
 
-| 工具名 (Tool) | 描述 (Description) |
-| :--- | :--- |
-| `browser_list_tabs` | 列出当前 Chrome 中打开的所有标签页（ID、标题、网址、激活状态） |
-| `browser_get_active_tab` | 获取当前正在浏览的活动标签页详情 |
-| `browser_find_tab` | 按网址或标题关键词瞬间找到指定标签页（如搜索 `"zhipin.com"`） |
-| `browser_click_element` | 模拟真实点击。不仅支持 CSS 选择器，还**支持直接按按钮文字点击**（如 `text="立即沟通"`） |
-| `browser_fill_input` | 自动向表单输入文本，穿透 React/Vue 虚拟 DOM，100% 触发 input/change 事件 |
-| `browser_query_elements` | 结构化读取页面指定 DOM 元素（文本、标签、链接、属性） |
-| `browser_evaluate_script` | 在页面上下文执行任意 JS 脚本，底层自动绕过 CSP 安全限制 |
-| `browser_take_screenshot` | 高清截图，即使浏览器在后台或电脑锁屏 (`Win+L`) 也能清晰截取 |
-| `browser_navigate` | 控制标签页跳转到新网址 |
-| `browser_create_tab` / `browser_close_tab` | 新建和关闭标签页 |
+| 工具名 (Tool) | 关键参数 (Params) | 描述 (Description) |
+| :--- | :--- | :--- |
+| `browser_list_tabs` | *无* | 列出当前 Chrome 中打开的所有标签页（ID、标题、网址、激活状态） |
+| `browser_get_active_tab` | *无* | 获取当前正在浏览的活动标签页详情 |
+| `browser_find_tab` | `url_keyword`, `title_keyword` | 按网址或标题关键词瞬间找到指定标签页（如搜索 `"zhipin.com"`） |
+| `browser_click_element` | `tab_id`, `selector`, `text` | 模拟真实点击。不仅支持 CSS 选择器，还**支持直接按按钮文字点击**（如 `text="立即沟通"`） |
+| `browser_fill_input` | `tab_id`, `selector`, `value` | 自动向表单输入文本，穿透 React/Vue 虚拟 DOM，100% 触发 input/change 事件 |
+| `browser_query_elements` | `tab_id`, `selector` | 结构化读取页面指定 DOM 元素（文本、标签、链接、属性） |
+| `browser_evaluate_script` | `tab_id`, `script` | 在页面上下文执行任意 JS 脚本，底层自动绕过 CSP 安全限制 |
+| `browser_take_screenshot` | `tab_id`, `output_path` | 高清截图，即使浏览器在后台或电脑锁屏 (`Win+L`) 也能清晰截取 |
+| `browser_navigate` | `tab_id`, `url` | 控制标签页跳转到新网址 |
+| `browser_create_tab` | `url`, `active` | 新建标签页 |
+| `browser_close_tab` | `tab_id` | 关闭指定标签页 |
 
 ---
 
-## 🏗️ 架构与安全设计
+### 🏗️ 架构与安全设计
 
 ```text
   [ AI 客户端 (Claude / Cursor / Antigravity) ]
@@ -103,36 +203,6 @@ git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
 
 > **🔒 隐私与安全承诺**：
 > 本工具完全基于本地环回地址（`127.0.0.1`）进行进程间通讯，**不存在任何外部服务器、没有任何云端中继、零隐私数据上报**。你的所有账号 Cookie 和浏览数据绝不离开你的电脑本地。
-
----
-
-<a name="english"></a>
-## 🌐 English Overview
-
-**Antigravity Browser Controller** is a lightweight, high-performance browser automation relay for modern AI Agents via Anthropic's **Model Context Protocol (MCP)**.
-
-### Why not Playwright or Vision Computer Use?
-* **Zero Auth Friction**: Inherits 100% of your real Chrome session (cookies, logins, 2FA) without launching sandboxed "ghost" windows or requiring `--remote-debugging-port`.
-* **Zero Mouse Stealing**: Unlike vision-based OS automation (Claude Computer Use), this extension operates in silent background DOM space. You can keep typing, coding, or gaming without mouse cursor interruptions.
-* **Immune to Lock Screen**: Continues executing flawlessly even when your screen is locked (`Win + L`).
-* **Framework-Friendly**: Overrides native setters to properly trigger Vue / React controlled component states.
-
-### Quick Setup
-```bash
-git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
-```
-1. Load this folder as an unpacked extension at `chrome://extensions/` (Enable Developer Mode).
-2. Add the MCP server entry to your client config (`claude_desktop_config.json` or Cursor MCP settings):
-```json
-{
-  "mcpServers": {
-    "antigravity-browser": {
-      "command": "python",
-      "args": ["path/to/antigravity-browser-mcp/bridge/mcp_server.py"]
-    }
-  }
-}
-```
 
 ---
 
