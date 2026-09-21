@@ -2,6 +2,7 @@
 > **Seamless Native Chrome Automation for AI Agents via Model Context Protocol (MCP)**  
 > *免重启、免 CDP 端口调试、零幽灵窗口，让 AI 随心接管你日常已登录的 Chrome 浏览器。*
 
+[![Author: yihongdo-glitch](https://img.shields.io/badge/Author-yihongdo--glitch-purple.svg)](https://github.com/yihongdo-glitch)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%20v2.2-blue.svg)](https://modelcontextprotocol.io/)
 [![Chrome: Manifest V3](https://img.shields.io/badge/Chrome-Manifest%20V3-green.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
@@ -27,7 +28,10 @@
 
 ## 🚀 10 秒极速上手
 
-### 1. 安装 Chrome 扩展
+### 1. 克隆与安装扩展
+```bash
+git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
+```
 1. 打开 Chrome 地址栏输入并回车：`chrome://extensions/`
 2. 打开右上角 **「开发者模式」** 开关。
 3. 将本项目文件夹直接拖入该页面（或点击左上角「加载已解压的扩展程序」选择本项目目录）。
@@ -43,7 +47,7 @@
     "antigravity-browser": {
       "command": "python",
       "args": [
-        "C:\\path\\to\\antigravity-browser-extension\\bridge\\mcp_server.py"
+        "path/to/antigravity-browser-mcp/bridge/mcp_server.py"
       ]
     }
   }
@@ -52,8 +56,9 @@
 
 #### 在 Cursor / Windsurf 中使用
 在 MCP 设置中添加自定义 stdio 命令：
+- **Name**: `antigravity-browser`
 - **Command**: `python`
-- **Args**: `C:\path\to\antigravity-browser-extension\bridge\mcp_server.py`
+- **Args**: `path/to/antigravity-browser-mcp/bridge/mcp_server.py`
 
 #### 在 Antigravity 中使用
 已内置挂载至全局 `mcp_config.json`，开箱即用。
@@ -113,6 +118,9 @@
 * **Framework-Friendly**: Overrides native setters to properly trigger Vue / React controlled component states.
 
 ### Quick Setup
+```bash
+git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
+```
 1. Load this folder as an unpacked extension at `chrome://extensions/` (Enable Developer Mode).
 2. Add the MCP server entry to your client config (`claude_desktop_config.json` or Cursor MCP settings):
 ```json
@@ -120,7 +128,7 @@
   "mcpServers": {
     "antigravity-browser": {
       "command": "python",
-      "args": ["/path/to/antigravity-browser-extension/bridge/mcp_server.py"]
+      "args": ["path/to/antigravity-browser-mcp/bridge/mcp_server.py"]
     }
   }
 }
@@ -129,4 +137,4 @@
 ---
 
 ## 📄 License
-This project is licensed under the [MIT License](./LICENSE). Free for both personal and commercial use.
+This project is licensed under the [MIT License](./LICENSE) - created by [@yihongdo-glitch](https://github.com/yihongdo-glitch). Free for personal and commercial use.
