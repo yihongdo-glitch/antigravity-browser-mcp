@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Controller</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="logo-box">
+      <img src="icons/icon-48.png" alt="logo" class="logo">
+      <div>
+        <div class="title">Antigravity</div>
+        <div class="subtitle">Agent 原生浏览器控制中继</div>
+      </div>
+    </div>
+    <div id="status-pill" class="status-pill disconnected">
+      <span class="status-dot"></span>
+      <span id="status-text">未连接</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">桥接服务端口 (Bridge Port)</div>
+    <div class="port-row">
+      <input type="number" id="port-input" value="18888" min="1024" max="65535" />
+      <button id="btn-save-port" class="btn btn-primary">保存并重连</button>
+    </div>
+    <div class="hint">默认端口 18888，需确保 Antigravity Python 服务运行中</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">当前活动标签页 (Active Tab)</div>
+    <div id="active-tab-box" class="active-tab-box">
+      <div id="tab-title" class="tab-title">检测中...</div>
+      <div id="tab-url" class="tab-url">-</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="btn-ping" class="btn btn-secondary">⚡ 测试 Ping</button>
+    <button id="btn-reload" class="btn btn-secondary">🔄 重新连接</button>
+  </div>
+
+  <div id="log-box" class="log-box">就绪</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

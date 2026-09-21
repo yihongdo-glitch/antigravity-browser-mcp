@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Antigravity Browser Controller",
+  "version": "1.0.0",
+  "description": "专为 Antigravity Agent 打造的浏览器原生控制中继插件，实现免 CDP 端口重启、零幽灵进程的原生浏览器控制",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "debugger",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Antigravity Browser Controller",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
