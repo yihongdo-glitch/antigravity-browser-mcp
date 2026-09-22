@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Antigravity Browser Controller",
-  "version": "1.0.0",
-  "description": "专为 Antigravity Agent 打造的浏览器原生控制中继插件，实现免 CDP 端口重启、零幽灵进程的原生浏览器控制",
+  "version": "2.0.0",
+  "description": "专为 AI Agent (Antigravity/Cursor/Claude) 打造的浏览器原生控制中继插件，支持 Ref 快照寻址、免 CDP 端口、锁屏静默执行与 CSRF 防御",
   "permissions": [
     "tabs",
     "scripting",
@@ -17,8 +17,7 @@
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*"
   },
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "action": {
     "default_title": "Antigravity Browser Controller",

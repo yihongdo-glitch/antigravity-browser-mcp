@@ -1,10 +1,11 @@
 @echo off
-cd /d "%~dp0"
+cd /d "C:\Users\admin\Desktop\Antigravity\antigravity-browser-extension"
 echo ======================================================
 echo   Pushing Antigravity Browser Controller to GitHub
 echo   https://github.com/yihongdo-glitch/antigravity-browser-mcp
 echo ======================================================
 echo.
+echo Current directory: %CD%
 echo Running: git push -u origin main
 echo.
 git push -u origin main
