@@ -20,6 +20,7 @@ Key Upgrades in v2.0.0:
 import argparse
 import asyncio
 import base64
+import hmac
 import json
 import os
 import secrets
@@ -83,8 +84,8 @@ def get_or_create_token() -> str:
             f.write(token)
         return token
     except Exception as e:
-        log(f"Token storage warning: {e}")
-        return "ag-default-secure-token"
+        log(f"Fatal error accessing or persisting bridge security token at {TOKEN_FILE}: {e}")
+        raise RuntimeError(f"Failed to access or persist bridge security token at {TOKEN_FILE}: {e}") from e
 
 
 _NO_PROXY_OPENER = None
@@ -118,11 +119,19 @@ class AntigravityBridgeServer:
     def _is_origin_allowed(self, origin: Optional[str]) -> bool:
         if not origin:
             return True
-        origin_lower = origin.lower()
+        origin_lower = origin.lower().strip()
+        if origin_lower == "null":
+            return False
         if origin_lower.startswith("chrome-extension://"):
             return True
-        if origin_lower in ("null", "http://127.0.0.1", "http://localhost",
-                            f"http://127.0.0.1:{self.ctrl_port}", f"http://localhost:{self.ctrl_port}"):
+        if origin_lower in (
+            "http://127.0.0.1",
+            "http://localhost",
+            f"http://127.0.0.1:{self.ctrl_port}",
+            f"http://localhost:{self.ctrl_port}",
+            f"http://127.0.0.1:{self.ws_port}",
+            f"http://localhost:{self.ws_port}",
+        ):
             return True
         return False
 
@@ -205,17 +214,29 @@ class AntigravityBridgeServer:
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Bridge-Token")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                origin = self.headers.get("Origin") or self.headers.get("origin")
+                if origin and server_self._is_origin_allowed(origin):
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Vary", "Origin")
+                    self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Bridge-Token")
+                    self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.end_headers()
                 self.wfile.write(body)
 
             def do_OPTIONS(self):
+                origin = self.headers.get("Origin") or self.headers.get("origin")
+                if origin and not server_self._is_origin_allowed(origin):
+                    log(f"Blocked forbidden OPTIONS Origin: {origin}")
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+
                 self.send_response(204)
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Bridge-Token")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                if origin and server_self._is_origin_allowed(origin):
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Vary", "Origin")
+                    self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Bridge-Token")
+                    self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.end_headers()
 
             def _check_security(self) -> bool:
@@ -225,7 +246,7 @@ class AntigravityBridgeServer:
                     self._send_json(403, {"success": False, "error": "Forbidden Origin"})
                     return False
 
-                # Token validation
+                # Mandatory token validation: all requests must provide a valid token
                 auth_header = self.headers.get("Authorization", "")
                 x_token = self.headers.get("X-Bridge-Token", "")
                 provided_token = ""
@@ -234,9 +255,8 @@ class AntigravityBridgeServer:
                 elif x_token:
                     provided_token = x_token.strip()
 
-                # Loopback requests from local scripts can supply token or pass if local caller
-                if provided_token and provided_token != server_self.auth_token:
-                    self._send_json(401, {"success": False, "error": "Invalid Bearer Token"})
+                if not provided_token or not hmac.compare_digest(provided_token, server_self.auth_token):
+                    self._send_json(401, {"success": False, "error": "Unauthorized: Missing or invalid token"})
                     return False
                 return True
 
