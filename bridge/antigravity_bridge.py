@@ -55,6 +55,28 @@ CTRL_PORT_OFFSET = 1  # HTTP control port = ws_port + 1 (18889)
 SELF_PATH = os.path.abspath(__file__)
 TOKEN_DIR = os.path.expanduser("~/.antigravity")
 TOKEN_FILE = os.path.join(TOKEN_DIR, "bridge.token")
+EXTENSION_ID_FILE = os.path.join(TOKEN_DIR, "extension.id")
+DEFAULT_EXTENSION_ID = "mhpapclpapdghfldpmapmapcfijibldi"
+
+
+def get_allowed_extension_id() -> Optional[str]:
+    # 1. Environment variable
+    env_id = os.environ.get("ANTIGRAVITY_EXTENSION_ID") or os.environ.get("AG_EXTENSION_ID")
+    if env_id and env_id.strip():
+        return env_id.strip()
+    # 2. Config file ~/.antigravity/extension.id
+    if os.path.exists(EXTENSION_ID_FILE):
+        try:
+            with open(EXTENSION_ID_FILE, "r", encoding="utf-8") as f:
+                val = f.read().strip()
+                if val:
+                    return val
+        except Exception as e:
+            log(f"Warning: Failed to read extension ID file {EXTENSION_ID_FILE}: {e}")
+    # 3. Default known unpacked extension ID
+    if DEFAULT_EXTENSION_ID:
+        return DEFAULT_EXTENSION_ID
+    return None
 
 NOT_CONNECTED_HINT = (
     "Chrome 插件未连接。请确认: (1) Chrome 浏览器正在运行；"
@@ -114,6 +136,11 @@ class AntigravityBridgeServer:
         self.pending_requests: Dict[str, asyncio.Future] = {}
         self.loop = None
         self.auth_token = get_or_create_token()
+        self.extension_id = get_allowed_extension_id()
+        if self.extension_id:
+            log(f"Allowed Chrome Extension ID: {self.extension_id}")
+        else:
+            log("Notice: No extension ID configured via ANTIGRAVITY_EXTENSION_ID or ~/.antigravity/extension.id. All chrome-extension:// origins will be denied.")
         self._httpd = None
 
     def _is_origin_allowed(self, origin: Optional[str]) -> bool:
@@ -123,7 +150,10 @@ class AntigravityBridgeServer:
         if origin_lower == "null":
             return False
         if origin_lower.startswith("chrome-extension://"):
-            return True
+            ext_id = origin_lower[len("chrome-extension://"):].rstrip("/")
+            if self.extension_id and ext_id == self.extension_id.lower():
+                return True
+            return False
         if origin_lower in (
             "http://127.0.0.1",
             "http://localhost",
@@ -135,13 +165,19 @@ class AntigravityBridgeServer:
             return True
         return False
 
-    async def _ws_handler(self, websocket):
+    def _get_ws_origin(self, websocket) -> Optional[str]:
+        req = getattr(websocket, "request", None)
+        if req is not None and hasattr(req, "headers"):
+            return req.headers.get("Origin") or req.headers.get("origin")
         headers = getattr(websocket, "request_headers", None)
-        origin = None
-        if headers:
-            origin = headers.get("Origin") or headers.get("origin")
-        if origin and not self._is_origin_allowed(origin):
-            log(f"Rejected unauthorized WebSocket Origin: {origin}")
+        if headers is not None:
+            return headers.get("Origin") or headers.get("origin")
+        return None
+
+    async def _ws_handler(self, websocket):
+        origin = self._get_ws_origin(websocket)
+        if not origin or not self._is_origin_allowed(origin):
+            log(f"Rejected unauthorized WebSocket connection (Origin: {origin})")
             await websocket.close(code=1008, reason="Unauthorized Origin")
             return
 
@@ -201,7 +237,8 @@ class AntigravityBridgeServer:
 
     async def _ws_main(self):
         self.loop = asyncio.get_running_loop()
-        async with ws_serve(lambda c: self._ws_handler(c), "127.0.0.1", self.ws_port):
+        ws_origins = [f"chrome-extension://{self.extension_id.lower()}"] if self.extension_id else []
+        async with ws_serve(lambda c: self._ws_handler(c), "127.0.0.1", self.ws_port, origins=ws_origins):
             log(f"WebSocket Listening on ws://127.0.0.1:{self.ws_port}/ws")
             await self._keepalive()
 
