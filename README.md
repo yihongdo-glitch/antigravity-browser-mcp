@@ -27,7 +27,7 @@ Current AI browser automation approaches—such as Playwright, Selenium, and vis
 | **Multi-Agent Concurrency** | Single debugger port locks out secondary agents | Fullscreen lock; cannot share mouse | **Dual-port decoupled architecture (WS:18888 + HTTP:18889): concurrent, stateless, zero-lockout** |
 | **Background & Lock Screen** | Creates blank `about:blank` ghost windows that hijack focus | Cannot run in background; fails immediately when screen is locked (`Win+L`) | **Runs silently in memory & DOM; continues operating even when Windows is locked** |
 | **Modern Web Frameworks** | Form fills fail to trigger React / Vue synthetic state changes | Coordinate clicks are prone to 5px offsets on dynamic or scrolling pages | **Overrides native setters to guarantee 100% reliable React / Vue event dispatching** |
-| **Security & CSRF** | Unauthenticated local ports expose browser to malicious websites | N/A | **Mandatory Bearer Token auth (`~/.antigravity/bridge.token`), strict Origin whitelist (null blocked), zero wildcard CORS** |
+| **Security & CSRF** | Unauthenticated local ports expose browser to malicious websites | N/A | **Mandatory Bearer Token auth (`~/.antigravity/bridge.token`), strict Origin whitelist (null blocked), zero wildcard CORS, WS handshake origin check & pinned extension ID** |
 
 ---
 
@@ -104,7 +104,7 @@ Pre-registered in `mcp_config.json`, fully plug-and-play.
         [ Antigravity Bridge Daemon & WebSocket Hub ]
                          ▲
                          │ (Local WebSocket: ws://127.0.0.1:18888/ws)
-                         │ (Origin-filtered: chrome-extension:// ONLY)
+                         │ (Handshake Origin Pinned: chrome-extension://<EXTENSION_ID>)
                          ▼
    [ Chrome Extension v2.0 (Manifest V3 Service Worker) ]
                          │
@@ -118,6 +118,7 @@ Pre-registered in `mcp_config.json`, fully plug-and-play.
 
 > **🔒 Privacy & Security Hardening**:
 > - **Mandatory Token Authentication**: Every request to the HTTP REST control gateway (`18889`) must provide a valid token via `Authorization: Bearer <token>` or `X-Bridge-Token: <token>`. Missing or invalid tokens are immediately rejected with HTTP `401 Unauthorized`.
+> - **WebSocket Handshake Origin Validation & Extension ID Pinning**: WebSocket connections on port `18888` strictly validate the `Origin` header during the HTTP opening handshake, immediately rejecting unauthorized origins (such as malicious webpages or `null`) with HTTP `403 Forbidden`. Wildcard `chrome-extension://` prefix acceptance has been eliminated; connections are strictly pinned to the specific extension ID configured via `ANTIGRAVITY_EXTENSION_ID` or `~/.antigravity/extension.id`.
 > - **Strict Origin Isolation & Zero Wildcard CORS**: Wildcard `Access-Control-Allow-Origin: *` has been completely eliminated. Requests with `Origin: null` (such as sandboxed iframes or `file://` contexts) are strictly blocked with HTTP `403 Forbidden`. CORS response headers are strictly reflected only for explicitly whitelisted origins (`chrome-extension://`, `127.0.0.1`, `localhost`).
 > - **Fail-Secure Token Management**: Cryptographically secure random tokens (`secrets.token_hex(24)`) are persisted to `~/.antigravity/bridge.token`. The daemon strictly halts execution if token persistence or read fails, completely eliminating fallback to default static tokens.
 > - **100% Local Loopback**: All communication happens strictly over the local loopback interface (`127.0.0.1`). **No external servers, no cloud relays, zero telemetry, zero analytics.** Your account cookies, session tokens, and browsing data never leave your local machine.
@@ -138,7 +139,7 @@ Pre-registered in `mcp_config.json`, fully plug-and-play.
 | **多 Agent 并发与锁死** | 调试端口互斥，二次拉起直接端口冲突崩溃 | 独占物理桌面，无法并发 | **双端口解耦 (WS:18888 + HTTP:18889)：无状态 HTTP 控制网关，多 Agent/脚本并发零锁死** |
 | **后台与锁屏** | 经常弹死白空白窗口（`about:blank`）遮挡屏幕 | 无法在后台运行；锁屏 (`Win+L`) 即报错崩溃 | **纯静默后台与内存 DOM 操作，锁屏后全自动运行** |
 | **前端框架兼容性** | 注入表单常因 React/Vue 受控组件虚拟 DOM 而无法提交 | 依靠物理坐标点击易偏 5 像素 | **重写 Native Setter，穿透并触发真实变更事件** |
-| **本地网络安全** | 本地无鉴权端口，易受网页 CSRF / DNS Rebinding 攻击 | 无 | **强制 Bearer Token 鉴权 + 严格来源白名单（封杀 null）+ 消除通配符 CORS** |
+| **本地网络安全** | 本地无鉴权端口，易受网页 CSRF / DNS Rebinding 攻击 | 无 | **强制 Bearer Token 鉴权 + 严格来源白名单（封杀 null）+ 消除通配符 CORS + WS 握手强校验与专属扩展 ID 绑定** |
 
 ---
 
@@ -215,7 +216,7 @@ git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
         [ Python 桥服务守护进程 (WebSocket + HTTP) ]
                          ▲
                          │ (ws://127.0.0.1:18888/ws 本地环回)
-                         │ (Origin 过滤: 仅放行 chrome-extension://)
+                         │ (握手阶段 Origin 精确绑定: chrome-extension://<EXTENSION_ID>)
                          ▼
       [ Chrome 扩展 v2.0 (Manifest V3 Service Worker) ]
                          │
@@ -229,6 +230,7 @@ git clone https://github.com/yihongdo-glitch/antigravity-browser-mcp.git
 
 > **🔒 隐私与深度安全加固**：
 > - **HTTP 控制通道强制鉴权**：访问 REST 控制网关（`18889`）的每个请求必须携带有效令牌（`Authorization: Bearer <token>` 或 `X-Bridge-Token: <token>`），未提供或令牌错误一律返回 HTTP `401 Unauthorized`。
+> - **WebSocket 握手期强校验与专属扩展 ID 绑定**：端口 `18888` 的 WebSocket 服务在 HTTP 握手阶段即对 `Origin` 进行强校验，非法来源（如恶意网页或 `null`）直接拒绝（`403 Forbidden`），绝不先建连后断开；彻底废除 `chrome-extension://` 宽泛前缀通配，仅精确放行通过 `ANTIGRAVITY_EXTENSION_ID` 环境变量或 `~/.antigravity/extension.id` 绑定的专属扩展 ID。
 > - **严格 Origin 来源隔离与 CORS 强化**：彻底移除 `Access-Control-Allow-Origin: *` 通配符；明确封杀沙箱 iframe 与本地文件发出的 `Origin: null`（直接拦截并返回 HTTP `403 Forbidden`）；仅对显式白名单来源（`chrome-extension://`、`127.0.0.1`、`localhost`）响应对应 CORS 头。
 > - **安全失败退出原则 (Fail-Secure)**：采用加密级随机令牌生成（`secrets.token_hex(24)`）并持久化至 `~/.antigravity/bridge.token`。杜绝硬编码后门密钥降级，读写令牌失败时主动报错退出。
 > - **纯本地进程环回**：所有交互严格限制在 `127.0.0.1` 本地回环接口。**无任何外部服务器、无任何云端中继、零隐私数据收集**，保护浏览器数据与日常 Cookie 绝对安全。
