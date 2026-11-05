@@ -869,7 +869,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=10.0)
     sp.add_argument("--tab-id", type=int)
 
-    sp = sub.add_parser("shot", help="Take screenshot (defaults to %TEMP%/antigravity_screenshots)")
+    sp = sub.add_parser("shot", help="Take screenshot (defaults to %%TEMP%%/antigravity_screenshots)")
     sp.add_argument("--tab-id", type=int)
     sp.add_argument("--out")
     sp.add_argument("--ref", type=int)
