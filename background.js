@@ -294,31 +294,64 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
   const limit = (typeof maxTextLen === 'number' && maxTextLen >= 0) ? maxTextLen : 500;
 
   if (includeBodyPreview !== false && limit > 0) {
-    let rawBody = document.body?.innerText || '';
-    // Strip all <select> option list dumps (both long 97-year and short AA/BB/CC selects) from bodyTextPreview
-    for (const selEl of document.querySelectorAll('select')) {
-      const opts = Array.from(selEl.options || []);
-      if (!opts.length) continue;
-      const curOpt = (selEl.selectedOptions && selEl.selectedOptions[0]) || opts[selEl.selectedIndex] || null;
-      const curTxt = curOpt ? (curOpt.text || '').trim() : (selEl.value || '');
-      const replacement = curTxt ? `[${curTxt}]` : '';
-      const selRaw = selEl.innerText || '';
-      if (selRaw && rawBody.includes(selRaw)) {
-        rawBody = rawBody.replace(selRaw, replacement);
-      } else if (opts.length > 1) {
-        const escapedOpts = opts
-          .map(o => (o.text || '').trim())
-          .filter(Boolean)
-          .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        if (escapedOpts.length > 1) {
-          try {
-            const re = new RegExp(escapedOpts.join('[\\s\\n\\r]+'));
-            rawBody = rawBody.replace(re, replacement);
-          } catch (e) {}
-        }
+    function extractBodyTextWithoutSelectOptions(root) {
+      if (!root) return '';
+      if (!root.querySelector('select')) {
+        return root.innerText || '';
       }
+      const blockTags = new Set([
+        'p', 'div', 'section', 'article', 'main', 'header', 'footer', 'aside', 'nav',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+        'table', 'thead', 'tbody', 'tr', 'blockquote', 'pre', 'form', 'fieldset', 'hr'
+      ]);
+      const parts = [];
+      function walk(node) {
+        if (!node) return;
+        if (node.nodeType === Node.TEXT_NODE) {
+          const val = node.nodeValue;
+          if (val) parts.push(val);
+          return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template') return;
+        if (tag === 'br') {
+          parts.push('\n');
+          return;
+        }
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+
+        if (tag === 'select') {
+          const opts = Array.from(node.options || []);
+          if (!opts.length) return;
+          const curOpt = (node.selectedOptions && node.selectedOptions[0]) || opts[node.selectedIndex] || null;
+          const curTxt = curOpt ? (curOpt.text || '').trim() : (node.value || '');
+          if (curTxt) parts.push(` [${curTxt}] `);
+          return;
+        }
+
+        const isBlock = blockTags.has(tag) || style.display === 'block' || style.display === 'flex' || style.display === 'grid';
+        // Fast path: if this subtree contains no <select>, use native innerText directly
+        if (!node.querySelector('select')) {
+          if (isBlock) parts.push('\n');
+          parts.push(node.innerText || '');
+          if (isBlock) parts.push('\n');
+          return;
+        }
+
+        if (isBlock) parts.push('\n');
+        for (const child of node.childNodes) {
+          walk(child);
+        }
+        if (isBlock) parts.push('\n');
+      }
+      walk(root);
+      return parts.join('');
     }
-    bodyText = rawBody.replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+
+    const rawBody = extractBodyTextWithoutSelectOptions(document.body);
+    bodyText = rawBody.replace(/[\t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     const suffix = '...[truncated]';
     textTruncated = bodyText.length > limit;
     if (textTruncated) {

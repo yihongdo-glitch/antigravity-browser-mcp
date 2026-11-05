@@ -129,22 +129,49 @@ def http_open(req, timeout: float):
     return _get_opener().open(req, timeout=timeout)
 
 
-def _is_inside_git_repo(abs_path: str) -> bool:
-    """Checks whether abs_path resides inside any Git working tree (has a .git ancestor), including repos under %TEMP%."""
-    abs_norm = os.path.abspath(abs_path)
+def _has_git_marker(dir_path: str) -> bool:
+    try:
+        return os.path.exists(os.path.join(dir_path, ".git"))
+    except Exception:
+        return False
+
+
+def _check_single_chain_for_git(target_path: str) -> bool:
+    abs_norm = os.path.abspath(target_path)
     temp_root = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
     inside_temp = os.path.normcase(abs_norm).startswith(temp_root + os.sep)
 
     cur = os.path.dirname(abs_norm)
     prev = None
     while cur and cur != prev:
-        if os.path.exists(os.path.join(cur, ".git")):
+        if _has_git_marker(cur):
             return True
+        try:
+            real_cur = os.path.realpath(cur)
+            if real_cur != cur and _has_git_marker(real_cur):
+                return True
+        except Exception:
+            pass
         if inside_temp and os.path.normcase(cur) == temp_root:
-            # Stop after checking up to %TEMP% root so stray .git in user home doesn't affect non-repo temp files
             break
         prev = cur
         cur = os.path.dirname(cur)
+    return False
+
+
+def _is_inside_git_repo(abs_path: str) -> bool:
+    """
+    Checks whether abs_path resides inside any Git working tree (has a .git ancestor),
+    including repos under %TEMP% and paths traversing Windows NTFS junctions or symlinks.
+    """
+    if _check_single_chain_for_git(abs_path):
+        return True
+    try:
+        real_target = os.path.realpath(os.path.abspath(abs_path))
+        if real_target != os.path.abspath(abs_path) and _check_single_chain_for_git(real_target):
+            return True
+    except Exception:
+        pass
     return False
 
 
