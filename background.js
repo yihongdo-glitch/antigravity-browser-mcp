@@ -1,22 +1,23 @@
 /**
- * Antigravity Browser Controller - Background Service Worker (v2.0.0)
+ * Antigravity Browser Controller - Background Service Worker (v2.1.0)
  * Native Agentic Browser Automation Bridge.
  *
  * Key Capabilities:
  * - Persistent WebSocket connection to Python Bridge (default: ws://127.0.0.1:18888/ws)
- * - Accessibility-inspired Element Ref Snapshot (`page.snapshot`) mapping interactive elements to numbered refs
+ * - Low-Token Accessibility-inspired Element Ref Snapshot (`page.snapshot`) with smart <select> folding
  * - Deepest leaf-node DOM resolution for text clicks (fixes wrapper div trap)
- * - React/Vue synthetic event bypass for controlled input fields
- * - CDP escape hatch (`chrome.debugger`) for CSP bypass and lock-screen/minimized screenshot capture
+ * - React/Vue synthetic event bypass for controlled input & native <select> (`dom.select`)
+ * - CDP escape hatch (`chrome.debugger`) for CSP bypass, lock-screen screenshot, element clipping, and mobile viewport emulation
  */
 
 const DEFAULT_PORT = 18888;
 const AGENT_NAME = 'antigravity-browser-extension';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 let ws = null;
 let reconnectTimer = null;
 let isConnecting = false;
+const emulatedTabs = new Set();
 
 /* ---------------- Badge UI ---------------- */
 function updateBadge(status) {
@@ -166,21 +167,30 @@ async function withDebugger(tabId, fn) {
     await chrome.debugger.attach({ tabId }, '1.3');
     attachedByUs = true;
   } catch (e) {
-    // Already attached by someone or previous call — proceed
+    // Already attached by someone or active viewport emulation — proceed
   }
   try {
     return await fn();
   } finally {
-    if (attachedByUs) {
+    if (attachedByUs && !emulatedTabs.has(tabId)) {
       try { await chrome.debugger.detach({ tabId }); } catch (e) { /* ignore */ }
     }
   }
 }
 
+try {
+  chrome.debugger.onDetach.addListener((source) => {
+    if (source && source.tabId) emulatedTabs.delete(source.tabId);
+  });
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    emulatedTabs.delete(tabId);
+  });
+} catch (e) {}
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-/* ---------------- Page Snapshot (Ref Architecture) ---------------- */
-function snapshotInPage(maxElems) {
+/* ---------------- Page Snapshot (Ref Architecture - Low Token v2.1) ---------------- */
+function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
   if (!window.__agRefs) window.__agRefs = {};
   const refs = window.__agRefs;
   let counter = window.__agRefCounter || 0;
@@ -188,7 +198,7 @@ function snapshotInPage(maxElems) {
   const interactiveSelector = [
     'a[href]', 'button', 'input', 'textarea', 'select', 'summary',
     '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]', '[role="option"]',
-    '[role="checkbox"]', '[role="switch"]', '[role="textbox"]',
+    '[role="checkbox"]', '[role="switch"]', '[role="textbox"]', '[role="combobox"]',
     '[onclick]', '[contenteditable="true"]', '[contenteditable=""]'
   ].join(',');
 
@@ -209,12 +219,28 @@ function snapshotInPage(maxElems) {
 
     const tag = el.tagName.toLowerCase();
     let text = '';
-    try {
-      text = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || el.title || el.alt || '').trim();
-    } catch (e) {}
+    let optionsCount = undefined;
+    let optionsPreview = undefined;
+
+    if (tag === 'select') {
+      // Avoid dumping all <option> texts (e.g. 90+ years) into text!
+      const selectedOpt = (el.selectedOptions && el.selectedOptions[0]) || (el.options && el.options[el.selectedIndex]) || null;
+      text = (selectedOpt ? selectedOpt.text : (el.getAttribute('aria-label') || el.title || '')).trim();
+      const opts = Array.from(el.options || []);
+      optionsCount = opts.length;
+      optionsPreview = opts.slice(0, 5).map(o => ({
+        value: o.value,
+        text: (o.text || '').trim().slice(0, 30),
+        selected: !!o.selected
+      }));
+    } else {
+      try {
+        text = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || el.title || el.alt || '').trim();
+      } catch (e) {}
+    }
     text = text.replace(/\s+/g, ' ').slice(0, 100);
 
-    return {
+    const item = {
       ref: counter,
       tag,
       type: el.type || null,
@@ -228,13 +254,30 @@ function snapshotInPage(maxElems) {
       disabled: !!el.disabled,
       selectorHint: el.id ? `#${el.id}` : (el.name ? `${tag}[name="${el.name}"]` : null)
     };
+    if (optionsCount !== undefined) {
+      item.optionsCount = optionsCount;
+      item.optionsPreview = optionsPreview;
+    }
+    return item;
   }
 
   const elements = Array.from(document.querySelectorAll(interactiveSelector));
   const out = [];
+  const optionCountByParent = new WeakMap();
+  let skippedRoleOptions = 0;
+
   for (const el of elements) {
     if (out.length >= maxElems) break;
     if (!isElementVisible(el)) continue;
+    // Cap custom [role="option"] items per parent container to prevent 90-item dropdown floods
+    if (el.getAttribute('role') === 'option' && el.parentElement) {
+      const prevCount = optionCountByParent.get(el.parentElement) || 0;
+      if (prevCount >= 12) {
+        skippedRoleOptions += 1;
+        continue;
+      }
+      optionCountByParent.set(el.parentElement, prevCount + 1);
+    }
     out.push(describeElement(el));
   }
 
@@ -246,11 +289,27 @@ function snapshotInPage(maxElems) {
       text: h.innerText.replace(/\s+/g, ' ').trim().slice(0, 120)
     }));
 
-  let bodyText = (document.body?.innerText || '').replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-  const textTruncated = bodyText.length > 2000;
-  if (textTruncated) bodyText = bodyText.slice(0, 2000) + '...[truncated]';
+  let bodyText = '';
+  let textTruncated = false;
+  const limit = (typeof maxTextLen === 'number' && maxTextLen >= 0) ? maxTextLen : 500;
 
-  return {
+  if (includeBodyPreview !== false && limit > 0) {
+    let rawBody = document.body?.innerText || '';
+    // Strip multi-option <select> text dumps from bodyTextPreview without mutating DOM
+    for (const selEl of document.querySelectorAll('select')) {
+      const selRaw = selEl.innerText || '';
+      if (selRaw.length > 20) {
+        const curOpt = (selEl.selectedOptions && selEl.selectedOptions[0]) || (selEl.options && selEl.options[selEl.selectedIndex]);
+        const curTxt = curOpt ? curOpt.text.trim() : (selEl.value || '');
+        rawBody = rawBody.replace(selRaw, curTxt ? `[${curTxt}]` : '');
+      }
+    }
+    bodyText = rawBody.replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    textTruncated = bodyText.length > limit;
+    if (textTruncated) bodyText = bodyText.slice(0, limit) + '...[truncated]';
+  }
+
+  const result = {
     title: document.title,
     url: location.href,
     readyState: document.readyState,
@@ -261,8 +320,12 @@ function snapshotInPage(maxElems) {
     textTruncated,
     elements: out,
     elementCount: out.length,
-    note: 'Use click/fill/press targeting {"ref": N}. Refs valid until page navigates.'
+    note: 'Use click/fill/select_option/press targeting {"ref": N}. Refs valid until page navigates.'
   };
+  if (skippedRoleOptions > 0) {
+    result.skippedRoleOptions = skippedRoleOptions;
+  }
+  return result;
 }
 
 /* ---------------- Smart Content Extractor ---------------- */
@@ -373,7 +436,7 @@ function fillInPage(sel, ref, value) {
   } else {
     // React/Vue Controlled Input Prototype Setter Bypass
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
-      : el instanceof HTMLSelectElement ? null
+      : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype
       : HTMLInputElement.prototype;
 
     if (proto) {
@@ -386,6 +449,108 @@ function fillInPage(sel, ref, value) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
   return { filled: true, currentVal: String(el.value || el.textContent || '').slice(0, 100) };
+}
+
+function selectInPage(sel, ref, value, text, index) {
+  const refs = window.__agRefs || {};
+  let el = null;
+
+  if (ref) {
+    el = refs[ref] || null;
+    if (!el || !el.isConnected) {
+      return { __agError: `Ref ${ref} is stale (page may have navigated). Re-run page.snapshot.` };
+    }
+  } else if (sel) {
+    el = document.querySelector(sel);
+  }
+
+  if (!el) return { __agError: `Select element not found (ref=${ref}, selector=${sel})` };
+
+  const tag = el.tagName.toLowerCase();
+  if (tag !== 'select') {
+    return {
+      __agError: `Element is <${tag}>, not a native <select> (ref=${ref}, selector=${sel}). For custom UI dropdowns, click the trigger first, then click the option text.`
+    };
+  }
+
+  const opts = Array.from(el.options || []);
+  if (!opts.length) {
+    return { __agError: `<select> has 0 options (ref=${ref}, selector=${sel})` };
+  }
+
+  let targetOpt = null;
+  if (index !== null && index !== undefined) {
+    const idx = Number(index);
+    if ( idx >= 0 && idx < opts.length) {
+      targetOpt = opts[idx];
+    }
+  } else if (value !== null && value !== undefined && String(value) !== '') {
+    const valStr = String(value);
+    targetOpt = opts.find(o => o.value === valStr)
+      || opts.find(o => (o.text || '').trim() === valStr.trim());
+  } else if (text !== null && text !== undefined && String(text) !== '') {
+    const txtStr = String(text).trim();
+    targetOpt = opts.find(o => (o.text || '').trim() === txtStr)
+      || opts.find(o => (o.text || '').trim().includes(txtStr))
+      || opts.find(o => o.value === txtStr);
+  }
+
+  if (!targetOpt) {
+    const sample = opts.slice(0, 8).map(o => `${o.value}("${(o.text || '').trim()}")`).join(', ');
+    return {
+      __agError: `Option not found in <select> (value=${value}, text=${text}, index=${index}). Total options=${opts.length}, sample=[${sample}]`
+    };
+  }
+
+  el.scrollIntoView({ behavior: 'instant', block: 'center' });
+  if (el.focus) el.focus();
+
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+  if (setter) {
+    setter.call(el, targetOpt.value);
+  } else {
+    el.value = targetOpt.value;
+  }
+  targetOpt.selected = true;
+  el.selectedIndex = targetOpt.index;
+
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+
+  return {
+    selected: true,
+    value: el.value,
+    text: (targetOpt.text || '').trim(),
+    selectedIndex: el.selectedIndex,
+    optionsCount: opts.length
+  };
+}
+
+function getElementClipInPage(sel, ref) {
+  const refs = window.__agRefs || {};
+  let el = null;
+  if (ref) {
+    el = refs[ref] || null;
+    if (!el || !el.isConnected) {
+      return { __agError: `Ref ${ref} is stale (page may have navigated). Re-run page.snapshot.` };
+    }
+  } else if (sel) {
+    el = document.querySelector(sel);
+  }
+  if (!el) return { __agError: `Element for screenshot clip not found (ref=${ref}, selector=${sel})` };
+
+  el.scrollIntoView({ behavior: 'instant', block: 'center' });
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) {
+    return { __agError: `Element has zero dimensions (${r.width}x${r.height})` };
+  }
+  return {
+    x: Math.max(0, Math.floor(r.left + window.scrollX)),
+    y: Math.max(0, Math.floor(r.top + window.scrollY)),
+    width: Math.ceil(r.width),
+    height: Math.ceil(r.height),
+    scale: 1
+  };
 }
 
 function pressInPage(sel, ref, key) {
@@ -488,13 +653,29 @@ async function handleMessage(msg) {
       }
       case 'tabs.screenshot': {
         const tabId = await resolveTabId(params.tabId);
+        let clip = null;
+        if (params.ref || params.selector) {
+          const tab = await chrome.tabs.get(tabId);
+          if (isRestrictedUrl(tab.url)) throw new Error(`Restricted page: ${tab.url}`);
+          clip = await inject(tabId, getElementClipInPage, [params.selector || null, params.ref || null]);
+        }
         const snap = await withDebugger(tabId, async () => {
           await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
-          return chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
-            format: params.format || 'png', quality: params.quality || 80
-          });
+          const cdpOpts = {
+            format: params.format || 'png',
+            quality: params.quality || 80
+          };
+          if (clip) {
+            cdpOpts.clip = clip;
+          }
+          return chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', cdpOpts);
         });
-        return sendReply(id, true, { dataUrl: `data:image/png;base64,${snap.data}` });
+        return sendReply(id, true, {
+          dataUrl: `data:image/png;base64,${snap.data}`,
+          tabId,
+          clipped: !!clip,
+          clip: clip || null
+        });
       }
 
       /* ---- Page Intelligence & Ref Snapshot ---- */
@@ -502,7 +683,10 @@ async function handleMessage(msg) {
         const tabId = await resolveTabId(params.tabId);
         const tab = await chrome.tabs.get(tabId);
         if (isRestrictedUrl(tab.url)) throw new Error(`Restricted page: ${tab.url}`);
-        const snap = await inject(tabId, snapshotInPage, [params.maxElems || 200]);
+        const maxElems = params.maxElems || 200;
+        const maxTextLen = (params.maxTextLen !== undefined && params.maxTextLen !== null) ? params.maxTextLen : 500;
+        const includeBodyPreview = params.includeBodyPreview !== false;
+        const snap = await inject(tabId, snapshotInPage, [maxElems, maxTextLen, includeBodyPreview]);
         return sendReply(id, true, snap);
       }
       case 'page.content': {
@@ -516,13 +700,83 @@ async function handleMessage(msg) {
         const tabId = await resolveTabId(params.tabId);
         const { selector, text, timeout = 10 } = params;
         if (!selector && !text) throw new Error('page.wait requires selector or text');
+        const tab = await chrome.tabs.get(tabId);
+        if (isRestrictedUrl(tab.url)) {
+          throw new Error(`Cannot wait on restricted browser URL: ${tab.url}`);
+        }
         const start = Date.now();
         while (Date.now() - start < timeout * 1000) {
           const ok = await inject(tabId, waitCheckInPage, [selector || null, text || null]);
-          if (ok) return sendReply(id, true, { waited: (Date.now() - start) / 1000, found: true });
+          if (ok) {
+            return sendReply(id, true, {
+              waited: Number(((Date.now() - start) / 1000).toFixed(2)),
+              found: true,
+              selector: selector || null,
+              text: text || null
+            });
+          }
           await sleep(400);
         }
-        return sendReply(id, false, null, `Timeout ${timeout}s waiting for ${selector || text}`);
+        // Gather diagnostic context on timeout so the Agent knows exactly why it failed
+        let diag = { url: tab.url, title: tab.title, readyState: 'unknown' };
+        try {
+          diag = await inject(tabId, () => ({
+            url: location.href,
+            title: document.title,
+            readyState: document.readyState,
+            bodySample: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+          }));
+        } catch (e) {}
+        const targetDesc = [
+          selector ? `selector="${selector}"` : null,
+          text ? `text="${text}"` : null
+        ].filter(Boolean).join(' and ');
+        return sendReply(
+          id,
+          false,
+          null,
+          `Timeout after ${timeout}s waiting for ${targetDesc} on page "${diag.title}" (${diag.url}, readyState=${diag.readyState})`
+        );
+      }
+      case 'page.set_viewport': {
+        const tabId = await resolveTabId(params.tabId);
+        const width = Number(params.width || 0);
+        const height = Number(params.height || 812);
+        const mobile = params.mobile !== false;
+        const scale = Number(params.scale || (mobile ? 2 : 1));
+        const reset = !!params.reset || width <= 0;
+
+        if (reset) {
+          emulatedTabs.delete(tabId);
+          try {
+            await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride');
+          } catch (e) {}
+          try {
+            await chrome.debugger.detach({ tabId });
+          } catch (e) {}
+          return sendReply(id, true, { tabId, reset: true, mode: 'desktop_default' });
+        }
+
+        emulatedTabs.add(tabId);
+        try {
+          await chrome.debugger.attach({ tabId }, '1.3');
+        } catch (e) {
+          // Already attached
+        }
+        await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
+          width,
+          height,
+          deviceScaleFactor: scale,
+          mobile
+        });
+        return sendReply(id, true, {
+          tabId,
+          width,
+          height,
+          mobile,
+          scale,
+          mode: mobile ? 'mobile_emulation' : 'custom_viewport'
+        });
       }
 
       /* ---- DOM Actions (Ref Preferred) ---- */
@@ -538,6 +792,19 @@ async function handleMessage(msg) {
         const tab = await chrome.tabs.get(tabId);
         if (isRestrictedUrl(tab.url)) throw new Error(`Restricted page: ${tab.url}`);
         const res = await inject(tabId, fillInPage, [params.selector || null, params.ref || null, params.value ?? '']);
+        return sendReply(id, true, res);
+      }
+      case 'dom.select': {
+        const tabId = await resolveTabId(params.tabId);
+        const tab = await chrome.tabs.get(tabId);
+        if (isRestrictedUrl(tab.url)) throw new Error(`Restricted page: ${tab.url}`);
+        const res = await inject(tabId, selectInPage, [
+          params.selector || null,
+          params.ref || null,
+          params.value !== undefined ? params.value : null,
+          params.text !== undefined ? params.text : null,
+          params.index !== undefined ? params.index : null
+        ]);
         return sendReply(id, true, res);
       }
       case 'dom.press': {

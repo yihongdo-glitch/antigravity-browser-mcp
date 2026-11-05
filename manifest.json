@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Antigravity Browser Controller",
-  "version": "2.0.0",
-  "description": "专为 AI Agent (Antigravity/Cursor/Claude) 打造的浏览器原生控制中继插件，支持 Ref 快照寻址、免 CDP 端口、锁屏静默执行与 CSRF 防御",
+  "version": "2.1.0",
+  "description": "专为 AI Agent (Antigravity/Cursor/Claude) 打造的浏览器原生控制中继插件 (v2.1.0)：支持低 Token 快照、免 Base64 截图、下拉框原生选择、移动端视口模拟与 CSRF 防御",
   "permissions": [
     "tabs",
     "scripting",

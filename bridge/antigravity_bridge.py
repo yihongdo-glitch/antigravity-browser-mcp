@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Antigravity Browser Bridge - Native RPC Gateway, Daemon & Python SDK (v2.0.0)
+Antigravity Browser Bridge - Native RPC Gateway, Daemon & Python SDK (v2.1.0)
 =============================================================================
 Architecture:
   Chrome Extension (WS Client)
@@ -9,12 +9,15 @@ Architecture:
         |  http://127.0.0.1:18889/action (REST Control Channel + CSRF/Token Auth)
   Agent / SDK / CLI / Other Tools (Concurrent, Stateless, Zero Lockout)
 
-Key Upgrades in v2.0.0:
-- Single-instance lockout bug permanently fixed via dual-port architecture.
-- Full Ref Snapshot engine support (`page.snapshot`, `page.content`, `page.wait`).
-- Origin validation & Local Loopback Bearer Token auth against CSRF / DNS rebinding.
-- Automatic lazy daemon spawning with in-process resilient fallback.
-- Python SDK + CLI interface matching multi-agent workflow requirements.
+Key Upgrades in v2.1.0:
+- Zero-Base64 Bloat Screenshots: Saves to %TEMP%/antigravity_screenshots by default,
+  auto-protects Git repositories from accidental screenshot pollution, and returns
+  lightweight metadata (~30 tokens instead of ~35,000 tokens).
+- Low-Token Page Snapshot: Smart <select> folding (only current selection + 5-option preview,
+  eliminating 90-year <option> text dumps) and configurable bodyTextPreview length.
+- Native Dropdown Selection (`dom.select` / `select_option`) with React/Vue event dispatch.
+- Mobile Viewport Emulation (`page.set_viewport` / `set_viewport`) via persistent CDP override.
+- Transparent Error Propagation: Fixed HTTP 500 error masking and added rich timeout diagnostics.
 """
 
 import argparse
@@ -27,13 +30,14 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -77,6 +81,7 @@ def get_allowed_extension_id() -> Optional[str]:
     if DEFAULT_EXTENSION_ID:
         return DEFAULT_EXTENSION_ID
     return None
+
 
 NOT_CONNECTED_HINT = (
     "Chrome 插件未连接。请确认: (1) Chrome 浏览器正在运行；"
@@ -122,6 +127,56 @@ def _get_opener():
 
 def http_open(req, timeout: float):
     return _get_opener().open(req, timeout=timeout)
+
+
+def _is_inside_git_repo(abs_path: str) -> bool:
+    """Checks whether abs_path resides inside a Git working tree (has a .git ancestor)."""
+    cur = os.path.dirname(os.path.abspath(abs_path))
+    temp_root = os.path.abspath(tempfile.gettempdir()).lower()
+    if os.path.abspath(abs_path).lower().startswith(temp_root):
+        return False
+    prev = None
+    while cur and cur != prev:
+        if os.path.exists(os.path.join(cur, ".git")):
+            return True
+        prev = cur
+        cur = os.path.dirname(cur)
+    return False
+
+
+def _resolve_safe_screenshot_path(
+    output_path: Optional[str] = None,
+    allow_repo_path: bool = False,
+) -> Tuple[str, Optional[str]]:
+    """
+    Resolves screenshot output path safely.
+    - If omitted, relative, or inside a Git repo (when allow_repo_path=False),
+      redirects to %TEMP%/antigravity_screenshots/<name>.png to prevent repo pollution.
+    Returns (resolved_abs_path, redirected_from_path_or_None).
+    """
+    temp_dir = os.path.join(tempfile.gettempdir(), "antigravity_screenshots")
+    os.makedirs(temp_dir, exist_ok=True)
+    default_name = f"shot_{int(time.time() * 1000)}.png"
+
+    if not output_path or not str(output_path).strip():
+        return os.path.join(temp_dir, default_name), None
+
+    raw = str(output_path).strip()
+    base = os.path.basename(raw) or default_name
+    if not base.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        base += ".png"
+
+    # Relative paths or bare filenames always go to temp_dir unless allow_repo_path=True
+    if not os.path.isabs(raw):
+        if allow_repo_path:
+            return os.path.abspath(raw), None
+        return os.path.join(temp_dir, base), raw
+
+    abs_out = os.path.abspath(raw)
+    if not allow_repo_path and _is_inside_git_repo(abs_out):
+        return os.path.join(temp_dir, base), raw
+
+    return abs_out, None
 
 
 # ============================================================================
@@ -306,7 +361,7 @@ class AntigravityBridgeServer:
                         "wsPort": server_self.ws_port,
                         "ctrlPort": server_self.ctrl_port,
                         "extensionConnected": bool(server_self.clients),
-                        "version": "2.0.0"
+                        "version": "2.1.0"
                     })
                 else:
                     self._send_json(404, {"error": "Endpoint not found"})
@@ -475,13 +530,17 @@ def call_bridge(action: str, params: Optional[Dict[str, Any]] = None,
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success"):
                 return data.get("data")
-            raise RuntimeError(data.get("error") or "Unknown bridge error")
+            raise RuntimeError(data.get("error") or f"Action '{action}' failed without error details")
     except urllib.error.HTTPError as e:
+        err_msg = f"HTTP Error {e.code}: {e.reason}"
         try:
-            err_data = json.loads(e.read().decode("utf-8"))
-            raise RuntimeError(err_data.get("error") or f"HTTP {e.code}")
+            raw_err = e.read().decode("utf-8")
+            err_data = json.loads(raw_err)
+            if err_data.get("error"):
+                err_msg = str(err_data["error"])
         except Exception:
-            raise RuntimeError(f"HTTP Error {e.code}: {e.reason}")
+            pass
+        raise RuntimeError(err_msg)
 
 
 # ============================================================================
@@ -490,8 +549,8 @@ def call_bridge(action: str, params: Optional[Dict[str, Any]] = None,
 
 class AntigravityBrowser:
     """
-    Antigravity Browser Controller Client SDK (v2.0.0)
-    Multi-process safe, zero-lockout, with Ref Snapshot support.
+    Antigravity Browser Controller Client SDK (v2.1.0)
+    Multi-process safe, zero-lockout, with Low-Token Ref Snapshot & Safe Screenshot support.
     """
 
     def __init__(self, port: int = DEFAULT_WS_PORT):
@@ -555,9 +614,24 @@ class AntigravityBrowser:
         return call_bridge("tabs.close", {"tabId": tab_id}, ws_port=self.port)
 
     # Page Intelligence & Ref Model
-    def page_snapshot(self, tab_id: Optional[int] = None, max_elems: int = 200) -> Dict[str, Any]:
-        """Returns structured list of interactive elements with numbered refs."""
-        return call_bridge("page.snapshot", {"tabId": tab_id, "maxElems": max_elems}, ws_port=self.port)
+    def page_snapshot(
+        self,
+        tab_id: Optional[int] = None,
+        max_elems: int = 200,
+        max_text_len: int = 500,
+        include_body_preview: bool = True,
+    ) -> Dict[str, Any]:
+        """Returns structured list of interactive elements with numbered refs (low-token v2.1)."""
+        return call_bridge(
+            "page.snapshot",
+            {
+                "tabId": tab_id,
+                "maxElems": max_elems,
+                "maxTextLen": max_text_len,
+                "includeBodyPreview": include_body_preview,
+            },
+            ws_port=self.port,
+        )
 
     def page_content(self, tab_id: Optional[int] = None, max_len: int = 50000) -> Dict[str, Any]:
         """Smart article and content extraction."""
@@ -568,6 +642,29 @@ class AntigravityBrowser:
         """Wait for selector or text to appear."""
         return call_bridge("page.wait", {"selector": selector, "text": text, "timeout": timeout, "tabId": tab_id},
                            timeout=timeout + 10, ws_port=self.port)
+
+    def set_viewport(
+        self,
+        tab_id: Optional[int] = None,
+        width: int = 375,
+        height: int = 812,
+        mobile: bool = True,
+        scale: float = 2.0,
+        reset: bool = False,
+    ) -> Dict[str, Any]:
+        """Simulate mobile/custom viewport size via CDP Emulation, or reset to desktop default."""
+        return call_bridge(
+            "page.set_viewport",
+            {
+                "tabId": tab_id,
+                "width": width,
+                "height": height,
+                "mobile": mobile,
+                "scale": scale,
+                "reset": reset,
+            },
+            ws_port=self.port,
+        )
 
     # DOM Actions
     def click(self, tab_id: Optional[int] = None, ref: Optional[int] = None,
@@ -591,6 +688,29 @@ class AntigravityBrowser:
         if selector:
             params["selector"] = selector
         return call_bridge("dom.fill", params, ws_port=self.port)
+
+    def select_option(
+        self,
+        tab_id: Optional[int] = None,
+        ref: Optional[int] = None,
+        selector: Optional[str] = None,
+        value: Optional[str] = None,
+        text: Optional[str] = None,
+        index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Select an <option> in a <select> dropdown by value, visible text, or 0-based index."""
+        params: Dict[str, Any] = {"tabId": tab_id}
+        if ref is not None:
+            params["ref"] = ref
+        if selector:
+            params["selector"] = selector
+        if value is not None:
+            params["value"] = value
+        if text is not None:
+            params["text"] = text
+        if index is not None:
+            params["index"] = index
+        return call_bridge("dom.select", params, ws_port=self.port)
 
     def press(self, tab_id: Optional[int] = None, ref: Optional[int] = None,
               selector: Optional[str] = None, key: str = "Enter") -> Dict[str, Any]:
@@ -620,17 +740,49 @@ class AntigravityBrowser:
     def cdp_send(self, tab_id: int, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return call_bridge("cdp.send", {"tabId": tab_id, "method": method, "cdpParams": params or {}}, ws_port=self.port)
 
-    def screenshot(self, tab_id: Optional[int] = None, output_path: Optional[str] = None) -> str:
-        res = call_bridge("tabs.screenshot", {"tabId": tab_id}, timeout=35.0, ws_port=self.port)
+    def screenshot(
+        self,
+        tab_id: Optional[int] = None,
+        output_path: Optional[str] = None,
+        ref: Optional[int] = None,
+        selector: Optional[str] = None,
+        return_base64: bool = False,
+        allow_repo_path: bool = False,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"tabId": tab_id}
+        if ref is not None:
+            params["ref"] = ref
+        if selector:
+            params["selector"] = selector
+
+        res = call_bridge("tabs.screenshot", params, timeout=35.0, ws_port=self.port)
         data_url = (res or {}).get("dataUrl", "")
-        if output_path and data_url.startswith("data:image"):
-            b64_data = data_url.split(",", 1)[1]
-            out = os.path.abspath(output_path)
-            os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-            with open(out, "wb") as f:
-                f.write(base64.b64decode(b64_data))
-            log(f"Screenshot saved to {out}")
-        return data_url
+        if not data_url.startswith("data:image"):
+            raise RuntimeError("Screenshot failed: no image data returned from browser")
+
+        b64_data = data_url.split(",", 1)[1]
+        img_bytes = base64.b64decode(b64_data)
+        out, redirected_from = _resolve_safe_screenshot_path(output_path, allow_repo_path=allow_repo_path)
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        with open(out, "wb") as f:
+            f.write(img_bytes)
+        log(f"Screenshot saved to {out} ({len(img_bytes)} bytes)")
+
+        result: Dict[str, Any] = {
+            "savedPath": out,
+            "bytes": len(img_bytes),
+            "tabId": (res or {}).get("tabId") or tab_id,
+            "clipped": bool((res or {}).get("clipped")),
+        }
+        if (res or {}).get("clip"):
+            result["clip"] = res["clip"]
+        if redirected_from:
+            result["redirectedToTemp"] = True
+            result["originalPath"] = redirected_from
+            result["note"] = "Saved to system temp directory to prevent polluting Git repository."
+        if return_base64:
+            result["dataUrl"] = data_url
+        return result
 
     def reload_extension(self) -> Dict[str, Any]:
         return call_bridge("extension.reload", ws_port=self.port)
@@ -671,6 +823,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("snap", help="AI Page Snapshot with Ref numbering")
     sp.add_argument("--tab-id", type=int)
     sp.add_argument("--max-elems", type=int, default=200)
+    sp.add_argument("--max-text-len", type=int, default=500)
+    sp.add_argument("--no-body", action="store_true")
 
     sp = sub.add_parser("click", help="Click element by ref, selector, or text")
     sp.add_argument("--ref", type=int)
@@ -682,6 +836,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--ref", type=int)
     sp.add_argument("--selector")
     sp.add_argument("--value", required=True)
+    sp.add_argument("--tab-id", type=int)
+
+    sp = sub.add_parser("select", help="Select dropdown <option> by value, text, or index")
+    sp.add_argument("--ref", type=int)
+    sp.add_argument("--selector")
+    sp.add_argument("--value")
+    sp.add_argument("--text")
+    sp.add_argument("--index", type=int)
+    sp.add_argument("--tab-id", type=int)
+
+    sp = sub.add_parser("viewport", help="Set or reset mobile/custom viewport size")
+    sp.add_argument("--width", type=int, default=375)
+    sp.add_argument("--height", type=int, default=812)
+    sp.add_argument("--desktop", action="store_true", help="Non-mobile custom viewport")
+    sp.add_argument("--reset", action="store_true", help="Reset to native desktop window")
     sp.add_argument("--tab-id", type=int)
 
     sp = sub.add_parser("press", help="Press key (Enter/Tab/Escape/Arrows)")
@@ -700,9 +869,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=10.0)
     sp.add_argument("--tab-id", type=int)
 
-    sp = sub.add_parser("shot", help="Take screenshot")
+    sp = sub.add_parser("shot", help="Take screenshot (defaults to %TEMP%/antigravity_screenshots)")
     sp.add_argument("--tab-id", type=int)
-    sp.add_argument("--out", required=True)
+    sp.add_argument("--out")
+    sp.add_argument("--ref", type=int)
+    sp.add_argument("--selector")
 
     sp = sub.add_parser("eval", help="Execute JavaScript")
     sp.add_argument("--code", required=True)
@@ -747,11 +918,26 @@ def main():
     elif args.cmd == "close":
         out_json(browser.close_tab(args.tab_id))
     elif args.cmd == "snap":
-        out_json(browser.page_snapshot(args.tab_id, max_elems=args.max_elems))
+        out_json(browser.page_snapshot(
+            args.tab_id,
+            max_elems=args.max_elems,
+            max_text_len=args.max_text_len,
+            include_body_preview=not args.no_body,
+        ))
     elif args.cmd == "click":
         out_json(browser.click(args.tab_id, ref=args.ref, selector=args.selector, text=args.text))
     elif args.cmd == "fill":
         out_json(browser.fill(args.tab_id, ref=args.ref, selector=args.selector, value=args.value))
+    elif args.cmd == "select":
+        out_json(browser.select_option(
+            args.tab_id, ref=args.ref, selector=args.selector,
+            value=args.value, text=args.text, index=args.index,
+        ))
+    elif args.cmd == "viewport":
+        out_json(browser.set_viewport(
+            args.tab_id, width=args.width, height=args.height,
+            mobile=not args.desktop, reset=args.reset,
+        ))
     elif args.cmd == "press":
         out_json(browser.press(args.tab_id, ref=args.ref, selector=args.selector, key=args.key))
     elif args.cmd == "content":
@@ -759,8 +945,7 @@ def main():
     elif args.cmd == "wait":
         out_json(browser.page_wait(selector=args.selector, text=args.text, timeout=args.timeout, tab_id=args.tab_id))
     elif args.cmd == "shot":
-        data_url = browser.screenshot(args.tab_id, output_path=args.out)
-        out_json({"saved": os.path.abspath(args.out), "bytes": os.path.getsize(args.out)})
+        out_json(browser.screenshot(args.tab_id, output_path=args.out, ref=args.ref, selector=args.selector))
     elif args.cmd == "eval":
         out_json(browser.evaluate(args.tab_id, args.code, timeout=args.timeout))
     elif args.cmd == "query":
