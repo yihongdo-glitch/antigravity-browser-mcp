@@ -203,11 +203,17 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
   ].join(',');
 
   function isElementVisible(el) {
-    if (!el || !el.isConnected || el.hidden) return false;
-    const closedDetails = el.closest('details:not([open])');
-    if (closedDetails) {
+    if (!el || !el.isConnected) return false;
+    if (el.closest('[hidden]')) return false;
+    let parent = el.parentElement;
+    while (parent) {
+      const closedDetails = parent.closest('details:not([open])');
+      if (!closedDetails) break;
       const summary = closedDetails.querySelector(':scope > summary');
-      if (!summary || (!summary.contains(el) && summary !== el)) return false;
+      if (!summary || (!summary.contains(el) && summary !== el)) {
+        return false;
+      }
+      parent = closedDetails.parentElement;
     }
     const rects = el.getClientRects();
     if (!rects.length) return false;
@@ -287,7 +293,7 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
   }
 
   const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
-    .filter(h => h.innerText && h.innerText.trim())
+    .filter(h => isElementVisible(h) && h.innerText && h.innerText.trim())
     .slice(0, 30)
     .map(h => ({
       level: parseInt(h.tagName[1], 10),
@@ -300,12 +306,6 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
 
   if (includeBodyPreview !== false && limit > 0) {
     function isSelectRendered(sel) {
-      if (!sel || !sel.isConnected) return false;
-      const closedDetails = sel.closest('details:not([open])');
-      if (closedDetails) {
-        const summary = closedDetails.querySelector(':scope > summary');
-        if (!summary || !summary.contains(sel)) return false;
-      }
       return isElementVisible(sel);
     }
 
