@@ -130,15 +130,19 @@ def http_open(req, timeout: float):
 
 
 def _is_inside_git_repo(abs_path: str) -> bool:
-    """Checks whether abs_path resides inside a Git working tree (has a .git ancestor)."""
-    cur = os.path.dirname(os.path.abspath(abs_path))
-    temp_root = os.path.abspath(tempfile.gettempdir()).lower()
-    if os.path.abspath(abs_path).lower().startswith(temp_root):
-        return False
+    """Checks whether abs_path resides inside any Git working tree (has a .git ancestor), including repos under %TEMP%."""
+    abs_norm = os.path.abspath(abs_path)
+    temp_root = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
+    inside_temp = os.path.normcase(abs_norm).startswith(temp_root + os.sep)
+
+    cur = os.path.dirname(abs_norm)
     prev = None
     while cur and cur != prev:
         if os.path.exists(os.path.join(cur, ".git")):
             return True
+        if inside_temp and os.path.normcase(cur) == temp_root:
+            # Stop after checking up to %TEMP% root so stray .git in user home doesn't affect non-repo temp files
+            break
         prev = cur
         cur = os.path.dirname(cur)
     return False
@@ -331,9 +335,18 @@ class AntigravityBridgeServer:
                     self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.end_headers()
 
+            def _drain_body(self):
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    if 0 < length <= 65536:
+                        self.rfile.read(length)
+                except Exception:
+                    pass
+
             def _check_security(self) -> bool:
                 origin = self.headers.get("Origin") or self.headers.get("origin")
                 if origin and not server_self._is_origin_allowed(origin):
+                    self._drain_body()
                     log(f"Blocked forbidden HTTP Origin: {origin}")
                     self._send_json(403, {"success": False, "error": "Forbidden Origin"})
                     return False
@@ -348,6 +361,7 @@ class AntigravityBridgeServer:
                     provided_token = x_token.strip()
 
                 if not provided_token or not hmac.compare_digest(provided_token, server_self.auth_token):
+                    self._drain_body()
                     self._send_json(401, {"success": False, "error": "Unauthorized: Missing or invalid token"})
                     return False
                 return True

@@ -295,18 +295,37 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
 
   if (includeBodyPreview !== false && limit > 0) {
     let rawBody = document.body?.innerText || '';
-    // Strip multi-option <select> text dumps from bodyTextPreview without mutating DOM
+    // Strip all <select> option list dumps (both long 97-year and short AA/BB/CC selects) from bodyTextPreview
     for (const selEl of document.querySelectorAll('select')) {
+      const opts = Array.from(selEl.options || []);
+      if (!opts.length) continue;
+      const curOpt = (selEl.selectedOptions && selEl.selectedOptions[0]) || opts[selEl.selectedIndex] || null;
+      const curTxt = curOpt ? (curOpt.text || '').trim() : (selEl.value || '');
+      const replacement = curTxt ? `[${curTxt}]` : '';
       const selRaw = selEl.innerText || '';
-      if (selRaw.length > 20) {
-        const curOpt = (selEl.selectedOptions && selEl.selectedOptions[0]) || (selEl.options && selEl.options[selEl.selectedIndex]);
-        const curTxt = curOpt ? curOpt.text.trim() : (selEl.value || '');
-        rawBody = rawBody.replace(selRaw, curTxt ? `[${curTxt}]` : '');
+      if (selRaw && rawBody.includes(selRaw)) {
+        rawBody = rawBody.replace(selRaw, replacement);
+      } else if (opts.length > 1) {
+        const escapedOpts = opts
+          .map(o => (o.text || '').trim())
+          .filter(Boolean)
+          .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        if (escapedOpts.length > 1) {
+          try {
+            const re = new RegExp(escapedOpts.join('[\\s\\n\\r]+'));
+            rawBody = rawBody.replace(re, replacement);
+          } catch (e) {}
+        }
       }
     }
     bodyText = rawBody.replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    const suffix = '...[truncated]';
     textTruncated = bodyText.length > limit;
-    if (textTruncated) bodyText = bodyText.slice(0, limit) + '...[truncated]';
+    if (textTruncated) {
+      bodyText = limit > suffix.length
+        ? bodyText.slice(0, limit - suffix.length) + suffix
+        : bodyText.slice(0, limit);
+    }
   }
 
   const result = {
@@ -481,13 +500,13 @@ function selectInPage(sel, ref, value, text, index) {
   let targetOpt = null;
   if (index !== null && index !== undefined) {
     const idx = Number(index);
-    if ( idx >= 0 && idx < opts.length) {
+    if (Number.isInteger(idx) && idx >= 0 && idx < opts.length) {
       targetOpt = opts[idx];
     }
-  } else if (value !== null && value !== undefined && String(value) !== '') {
+  } else if (value !== null && value !== undefined) {
     const valStr = String(value);
     targetOpt = opts.find(o => o.value === valStr)
-      || opts.find(o => (o.text || '').trim() === valStr.trim());
+      || (valStr !== '' ? opts.find(o => (o.text || '').trim() === valStr.trim()) : null);
   } else if (text !== null && text !== undefined && String(text) !== '') {
     const txtStr = String(text).trim();
     targetOpt = opts.find(o => (o.text || '').trim() === txtStr)
@@ -653,9 +672,9 @@ async function handleMessage(msg) {
       }
       case 'tabs.screenshot': {
         const tabId = await resolveTabId(params.tabId);
+        const tab = await chrome.tabs.get(tabId);
         let clip = null;
         if (params.ref || params.selector) {
-          const tab = await chrome.tabs.get(tabId);
           if (isRestrictedUrl(tab.url)) throw new Error(`Restricted page: ${tab.url}`);
           clip = await inject(tabId, getElementClipInPage, [params.selector || null, params.ref || null]);
         }
@@ -668,7 +687,25 @@ async function handleMessage(msg) {
           if (clip) {
             cdpOpts.clip = clip;
           }
-          return chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', cdpOpts);
+          // For background (non-active) tabs, Chromium compositor may suspend surface frames.
+          // Enabling focus emulation and captureBeyondViewport forces immediate Blink paint without waiting 35s.
+          if (!tab.active) {
+            try {
+              await chrome.debugger.sendCommand({ tabId }, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+            } catch (e) {}
+            cdpOpts.captureBeyondViewport = true;
+          }
+          try {
+            return await Promise.race([
+              chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', cdpOpts),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('surface-timeout')), 4000))
+            ]);
+          } catch (err) {
+            return await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
+              ...cdpOpts,
+              captureBeyondViewport: true
+            });
+          }
         });
         return sendReply(id, true, {
           dataUrl: `data:image/png;base64,${snap.data}`,
