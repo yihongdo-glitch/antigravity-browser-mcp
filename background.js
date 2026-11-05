@@ -203,13 +203,18 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
   ].join(',');
 
   function isElementVisible(el) {
-    if (!el.isConnected) return false;
+    if (!el || !el.isConnected || el.hidden) return false;
+    const closedDetails = el.closest('details:not([open])');
+    if (closedDetails) {
+      const summary = closedDetails.querySelector(':scope > summary');
+      if (!summary || (!summary.contains(el) && summary !== el)) return false;
+    }
     const rects = el.getClientRects();
     if (!rects.length) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 1 && r.height < 1) return false;
     const style = getComputedStyle(el);
-    return style.visibility !== 'hidden' && style.display !== 'none';
+    return style.visibility !== 'hidden' && style.visibility !== 'collapse' && style.display !== 'none';
   }
 
   function describeElement(el) {
@@ -294,15 +299,36 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
   const limit = (typeof maxTextLen === 'number' && maxTextLen >= 0) ? maxTextLen : 500;
 
   if (includeBodyPreview !== false && limit > 0) {
+    function isSelectRendered(sel) {
+      if (!sel || !sel.isConnected) return false;
+      const closedDetails = sel.closest('details:not([open])');
+      if (closedDetails) {
+        const summary = closedDetails.querySelector(':scope > summary');
+        if (!summary || !summary.contains(sel)) return false;
+      }
+      return isElementVisible(sel);
+    }
+
+    function hasRenderedSelect(el) {
+      if (!el || !el.querySelector) return false;
+      if (el.tagName && el.tagName.toLowerCase() === 'select') return isSelectRendered(el);
+      const selects = el.querySelectorAll('select');
+      for (const s of selects) {
+        if (isSelectRendered(s)) return true;
+      }
+      return false;
+    }
+
     function extractBodyTextWithoutSelectOptions(root) {
       if (!root) return '';
-      if (!root.querySelector('select')) {
+      if (!hasRenderedSelect(root)) {
         return root.innerText || '';
       }
       const blockTags = new Set([
         'p', 'div', 'section', 'article', 'main', 'header', 'footer', 'aside', 'nav',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-        'table', 'thead', 'tbody', 'tr', 'blockquote', 'pre', 'form', 'fieldset', 'hr'
+        'table', 'thead', 'tbody', 'tr', 'blockquote', 'pre', 'form', 'fieldset', 'hr',
+        'details', 'summary'
       ]);
       const parts = [];
       function walk(node) {
@@ -319,10 +345,26 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
           parts.push('\n');
           return;
         }
+        if (node.hidden) return;
         const style = getComputedStyle(node);
-        if (style.display === 'none' || style.visibility === 'hidden') return;
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return;
+        if (style.display !== 'contents' && node.getClientRects().length === 0) return;
+
+        // Closed <details>: only its direct <summary> child (or browser default label) is visible in layout
+        if (tag === 'details' && !node.open) {
+          const summary = node.querySelector(':scope > summary');
+          parts.push('\n');
+          if (summary) {
+            walk(summary);
+          } else {
+            parts.push(node.innerText || '');
+          }
+          parts.push('\n');
+          return;
+        }
 
         if (tag === 'select') {
+          if (!isSelectRendered(node)) return;
           const opts = Array.from(node.options || []);
           if (!opts.length) return;
           const curOpt = (node.selectedOptions && node.selectedOptions[0]) || opts[node.selectedIndex] || null;
@@ -332,8 +374,8 @@ function snapshotInPage(maxElems, maxTextLen, includeBodyPreview) {
         }
 
         const isBlock = blockTags.has(tag) || style.display === 'block' || style.display === 'flex' || style.display === 'grid';
-        // Fast path: if this subtree contains no <select>, use native innerText directly
-        if (!node.querySelector('select')) {
+        // Fast path: if this subtree contains no rendered <select>, use native innerText directly
+        if (!hasRenderedSelect(node)) {
           if (isBlock) parts.push('\n');
           parts.push(node.innerText || '');
           if (isBlock) parts.push('\n');
